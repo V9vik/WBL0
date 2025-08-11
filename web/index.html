@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Order Viewer</title>
+    <style>
+        :root { --bg:#0b0d12; --card:#121621; --muted:#9aa4b2; --text:#eef2f7; --ok:#2ecc71; --err:#ff6b6b; }
+        *{box-sizing:border-box}
+        body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,sans-serif; background:var(--bg); color:var(--text);}
+        .wrap{max-width:920px; margin:32px auto; padding:0 16px;}
+        h1{font-weight:700; font-size:24px; margin:0 0 16px}
+        .card{background:var(--card); border:1px solid #1f2736; border-radius:16px; padding:16px; box-shadow:0 8px 24px rgba(0,0,0,.25);}
+        .row{display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px}
+        input[type=text]{flex:1; min-width:260px; padding:12px 14px; border-radius:12px; border:1px solid #263045; background:#0e1320; color:var(--text); outline:none}
+        button{padding:12px 16px; border-radius:12px; border:1px solid #2b3650; background:#1b2233; color:#dfe7f3; cursor:pointer}
+        button:hover{background:#222b40}
+        .muted{color:var(--muted); font-size:13px}
+        .status{margin:8px 0 0}
+        .status.ok{color:var(--ok)}
+        .status.err{color:var(--err)}
+        .grid{display:grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap:12px}
+        .kpi{background:#0f1422; border:1px solid #1e2740; border-radius:12px; padding:12px}
+        .kpi .k{font-size:12px; color:var(--muted)}
+        .kpi .v{font-weight:600; margin-top:4px}
+        details{background:#0f1422; border:1px solid #1e2740; border-radius:12px; padding:10px 12px}
+        details + details{margin-top:8px}
+        table{width:100%; border-collapse:collapse; margin-top:8px}
+        th,td{border-bottom:1px solid #1e2740; padding:8px 6px; text-align:left; font-size:14px}
+        pre{background:#0f1422; border:1px solid #1e2740; border-radius:12px; padding:12px; overflow:auto; margin:8px 0 0}
+        .hint{margin-top:6px}
+        @media (max-width: 720px){ .grid{grid-template-columns:1fr} }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <h1>Поиск заказа</h1>
+    <div class="card">
+        <div class="row">
+            <input id="orderId" type="text" placeholder="введите order_uid (например, b563feb7b2b84b6test)" />
+            <button id="go">Найти</button>
+        </div>
+        <div id="msg" class="muted">Введите ID и нажмите “Найти” (или Enter).</div>
+
+        <div id="result" style="margin-top:14px; display:none">
+            <div class="grid">
+                <div class="kpi">
+                    <div class="k">Order UID</div>
+                    <div class="v" id="k_order_uid">—</div>
+                </div>
+                <div class="kpi">
+                    <div class="k">Track number</div>
+                    <div class="v" id="k_track">—</div>
+                </div>
+                <div class="kpi">
+                    <div class="k">Customer</div>
+                    <div class="v" id="k_customer">—</div>
+                </div>
+                <div class="kpi">
+                    <div class="k">Created at</div>
+                    <div class="v" id="k_date">—</div>
+                </div>
+            </div>
+
+            <details style="margin-top:12px" open>
+                <summary>Доставка</summary>
+                <div class="hint muted" id="delivery_block">—</div>
+            </details>
+
+            <details>
+                <summary>Оплата (суммы условно в основных единицах)</summary>
+                <div class="hint muted" id="payment_block">—</div>
+            </details>
+
+            <details>
+                <summary>Товары</summary>
+                <div id="items_block">—</div>
+            </details>
+
+            <details>
+                <summary>Сырой JSON</summary>
+                <pre id="raw_json"></pre>
+            </details>
+
+            <div id="status" class="status"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const $ = (id) => document.getElementById(id);
+    const $id = $('orderId'), $btn = $('go'), $msg = $('msg'), $res = $('result');
+
+    function fmtDate(s) {
+        if (!s) return '—';
+        try { return new Date(s).toLocaleString(); } catch { return s; }
+    }
+    function moneyFromMinor(x) {
+        if (typeof x !== 'number') return '—';
+        return (x / 100).toFixed(2);
+    }
+
+    function render(data) {
+        $('k_order_uid').textContent = data.order_uid ?? '—';
+        $('k_track').textContent = data.track_number ?? '—';
+        $('k_customer').textContent = data.customer_id ?? '—';
+        $('k_date').textContent = fmtDate(data.date_created);
+
+        const d = data.delivery || {};
+        $('delivery_block').textContent =
+            `${d.name ?? '—'}, ${d.phone ?? '—'} · ${d.city ?? ''}, ${d.address ?? ''} (${d.email ?? ''})`;
+
+        const p = data.payment || {};
+        $('payment_block').innerHTML =
+            `Провайдер: <b>${p.provider ?? '—'}</b>, валюта: <b>${p.currency ?? '—'}</b><br>` +
+            `Итог: <b>${moneyFromMinor(p.amount)}</b>, доставка: ${moneyFromMinor(p.delivery_cost)}, ` +
+            `товары: ${moneyFromMinor(p.goods_total)}, сбор: ${moneyFromMinor(p.custom_fee)}<br>` +
+            `Транзакция: ${p.transaction ?? '—'}, банк: ${p.bank ?? '—'}, дата: ${p.payment_dt ?? '—'}`;
+
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (items.length) {
+            const rows = items.map(it =>
+                `<tr>
+             <td>${it.chrt_id ?? '—'}</td>
+             <td>${it.name ?? '—'}</td>
+             <td>${it.brand ?? '—'}</td>
+             <td>${it.size ?? '—'}</td>
+             <td>${it.status ?? '—'}</td>
+             <td>${it.track_number ?? '—'}</td>
+             <td>${moneyFromMinor(it.price)}</td>
+             <td>${moneyFromMinor(it.total_price)}</td>
+           </tr>`).join('');
+            $('items_block').innerHTML =
+                `<table>
+             <thead><tr>
+               <th>CHRT</th><th>Название</th><th>Бренд</th><th>Размер</th>
+               <th>Статус</th><th>Трек</th><th>Цена</th><th>Итого</th>
+             </tr></thead>
+             <tbody>${rows}</tbody>
+           </table>`;
+        } else {
+            $('items_block').textContent = '—';
+        }
+
+        $('raw_json').textContent = JSON.stringify(data, null, 2);
+        $('status').className = 'status ok';
+        $('status').textContent = 'Готово';
+        $res.style.display = '';
+    }
+
+    async function load() {
+        const id = $id.value.trim();
+        if (!id) { $msg.textContent = 'Введите order_uid'; return; }
+
+        $msg.textContent = 'Загружаю…';
+        $('status').textContent = '';
+        $res.style.display = 'none';
+
+        try {
+            const res = await fetch(`/order/${encodeURIComponent(id)}`);
+            if (res.status === 404) {
+                $msg.textContent = 'Не найдено';
+                return;
+            }
+            if (!res.ok) {
+                $msg.textContent = `Ошибка сервера (${res.status})`;
+                return;
+            }
+            const data = await res.json();
+            $msg.textContent = '';
+            render(data);
+        } catch (e) {
+            $msg.textContent = 'Сетевая ошибка';
+        }
+    }
+
+    $btn.addEventListener('click', load);
+    $id.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') load(); });
+
+    // Быстрый демо-id для удобства
+    window.addEventListener('DOMContentLoaded', () => {
+        if (!$id.value) $id.value = 'b563feb7b2b84b6test';
+    });
+</script>
+</body>
+</html>
